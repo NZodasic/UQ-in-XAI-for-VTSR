@@ -1,0 +1,10 @@
+Component,Purpose,Key Outputs,Approximate Time
+EDA,Understand data distribution and quality,"Class distribution, image stats, quality metrics",10 minutes
+Data Cleaning,"Remove errors, balance classes","Cleaned dataset, balanced classes",10 minutes
+Data Augmentation,"Increase data diversity, prevent overfitting","Augmented images, normalized inputs",During training
+Model Architecture,Feature extraction and classification,Trained model parameters,5 minutes setup
+Training,Learn from data,"Loss curves, accuracy curves",30-60 minutes
+Uncertainty Quantification,Estimate prediction reliability,"Epistemic, aleatoric, total uncertainty",15 minutes
+Explainable AI,Understand model decisions,"Grad-CAM heatmaps, feature importance",10 minutes
+Evaluation,Measure performance,"Accuracy, precision, recall, F1",15 minutes
+Calibration,Align confidence with accuracy,"ECE, reliability diagrams",5 minutes

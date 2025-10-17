@@ -1,0 +1,6 @@
+Method,Explanation Type,Model Requirement,Computational Cost,Interpretability,Best For
+Grad-CAM,Visual (heatmap),CNN with conv layers,Low (single forward+backward),"High (visual, intuitive)",Image classification
+LIME,Feature importance,Any model (model-agnostic),High (many perturbations),Medium (feature-based),Tabular and image data
+SHAP,Feature importance,Any model (model-agnostic),High (many perturbations),Medium (numerical values),Global and local explanations
+Integrated Gradients,Visual (attribution),Differentiable model,Medium (multiple forward passes),High (pixel attribution),Detailed pixel importance
+Attention Visualization,Visual (attention weights),Model with attention,Very Low (extract weights),High (attention scores),Transformer-based models

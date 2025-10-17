@@ -1,0 +1,9 @@
+Metric,What It Measures,Good Value,Formula
+Accuracy,Overall correctness,> 0.90 (90%),(TP + TN) / Total
+Precision,How many predictions are correct when model predicts positive,> 0.85,TP / (TP + FP)
+Recall,How many actual positives are found,> 0.85,TP / (TP + FN)
+F1-Score,Harmonic mean of precision and recall,> 0.85,2 × (Precision × Recall) / (Precision + Recall)
+Expected Calibration Error (ECE),Average calibration error across bins,< 0.05,Σ |accuracy - confidence| × bin_proportion
+Maximum Calibration Error (MCE),Maximum calibration error in any bin,< 0.10,max |accuracy - confidence|
+Average Uncertainty,Average model uncertainty,< 0.20,mean(uncertainty)
+Predictive Entropy,Average prediction uncertainty (information theory),< 1.0,-Σ p(c) log p(c)
