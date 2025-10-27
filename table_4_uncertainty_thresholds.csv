@@ -1,6 +1,0 @@
-Uncertainty Level,Threshold Range,Confidence Level,Recommended Action,Use Case Example,Risk Level
-Very Low,< 0.10,Very High (> 0.90),✓ Accept automatically,"Clear, well-lit traffic signs",Very Low
-Low,0.10 - 0.20,High (0.75 - 0.90),✓ Accept with logging,Standard conditions,Low
-Medium,0.20 - 0.30,Medium (0.60 - 0.75),⚠ Flag for review,Slightly occluded or angled signs,Medium
-High,0.30 - 0.40,Low (0.50 - 0.60),⚠ Require verification,"Poor visibility, unusual angles",High
-Very High,> 0.40,Very Low (< 0.50),✗ Reject - Human required,"Heavily occluded, damaged, or unfamiliar signs",Very High

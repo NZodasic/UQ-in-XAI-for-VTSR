@@ -1,6 +1,0 @@
-Method,Uncertainty Type,Computational Cost,Ease of Implementation,Accuracy,Best Use Case
-Monte Carlo Dropout,Epistemic,Medium (20-30 forward passes),Easy (add dropout at test time),Good,"Model uncertainty, out-of-distribution"
-Test-Time Augmentation,Aleatoric,Medium (10-20 augmentations),Easy (apply augmentations),Good,"Data uncertainty, noisy inputs"
-Deep Ensembles,Both,High (train multiple models),Medium (train multiple models),Excellent,"Critical applications, highest accuracy"
-Bayesian Neural Networks,Both,Very High (approximate inference),Hard (complex inference),Excellent,"Principled uncertainty, research"
-Evidential Deep Learning,Both,Low (single forward pass),Medium (custom loss function),Very Good,"Single-pass uncertainty, production"
