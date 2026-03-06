@@ -118,9 +118,10 @@ def train(mode: str, epochs: int | None = None, batch: int | None = None) -> Pat
     log_file = run_dir / "logs" / "train.log"
     logger = get_logger(f"TSR-{mode.upper()}", log_file=log_file)
 
+    gpu_suffix = f" ({dinfo.get('gpu_name', '')})" if dev in (0, "cuda") else ""
     print_experiment_setup(
         mode=mode,
-        device=f"{dev}" + (f" ({dinfo.get('gpu_name', '')})" if dev == "cuda" else ""),
+        device=f"{dev}{gpu_suffix}",
         batch=_batch,
         epochs=_epochs,
         lr=_lr0,

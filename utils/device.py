@@ -23,10 +23,10 @@ def set_seed(seed: int = 42) -> None:
     os.environ["PYTHONHASHSEED"] = str(seed)
 
 
-def get_device() -> str:
+def get_device():
     """Auto-detect best available device."""
     if torch.cuda.is_available():
-        device = "cuda"
+        device = 0  # Ultralytics prefers 0 over 'cuda'
     elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         device = "mps"
     else:
@@ -38,7 +38,7 @@ def device_info() -> dict:
     """Return a dict with device metadata for logging."""
     device = get_device()
     info: dict = {"device": device}
-    if device == "cuda":
+    if device == 0 or device == "cuda":
         info["gpu_name"] = torch.cuda.get_device_name(0)
         info["gpu_memory_gb"] = round(
             torch.cuda.get_device_properties(0).total_memory / 1e9, 2
