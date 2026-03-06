@@ -1,0 +1,94 @@
+# ============================================================
+# Vietnamese Traffic Sign Recognition - Configuration
+# ============================================================
+
+# ---------- Reproducibility ----------
+seed: 42
+
+# ---------- Dataset ----------
+dataset:
+  root: "data/train_data"
+  yaml: "data/train_data/custom_data.yaml"
+  num_classes: 29
+  class_names:
+    - "one way prohibition"
+    - "no parking"
+    - "no stopping and parking"
+    - "no turn left"
+    - "no turn right"
+    - "no u turn"
+    - "no u and left turn"
+    - "no u and right turn"
+    - "no motorbike entry/turning"
+    - "no car entry/turning"
+    - "no truck entry/turning"
+    - "other prohibition"
+    - "indication"
+    - "direction"
+    - "speed limit"
+    - "weight limit"
+    - "height limit"
+    - "pedestrian crossing"
+    - "intersection danger"
+    - "road danger"
+    - "pedestrian danger"
+    - "construction danger"
+    - "slow warning"
+    - "other warning"
+    - "vehicle permission lane"
+    - "vehicle and speed permission lane"
+    - "overpass route"
+    - "no more prohibition"
+    - "other"
+
+# ---------- Model ----------
+model:
+  name: "yolo12n"              # yolo12n | yolo12s | yolo12m | yolo12l | yolo12x
+  pretrained_weights: "yolo12n.pt"   # COCO-pretrained checkpoint
+  input_size: 640
+  # Uncertainty Quantification
+  mc_dropout_passes: 20
+  dropout_rate: 0.1
+  # XAI
+  enable_gradcam: true
+
+# ---------- Training ----------
+training:
+  scratch:
+    epochs: 100
+    batch: 16
+    lr0: 0.01
+    lrf: 0.01
+    momentum: 0.937
+    weight_decay: 0.0005
+    optimizer: "SGD"
+    warmup_epochs: 3
+    workers: 4
+    patience: 20              # early stopping patience
+    pretrained: false
+
+  pretrained:
+    epochs: 100
+    batch: 16
+    lr0: 0.001               # lower LR for fine-tuning
+    lrf: 0.01
+    momentum: 0.937
+    weight_decay: 0.0005
+    optimizer: "AdamW"
+    warmup_epochs: 3
+    workers: 4
+    patience: 20
+    pretrained: true
+
+# ---------- Pruning ----------
+pruning:
+  method: "magnitude"         # magnitude-based L1 unstructured pruning
+  sparsity: 0.3               # 30% weights pruned
+  fine_tune_epochs: 10
+
+# ---------- Paths ----------
+paths:
+  experiment_dir: "EXPERIMENT"
+  weights_dir: "weights"
+  plots_dir: "plots"
+  logs_dir: "logs"
