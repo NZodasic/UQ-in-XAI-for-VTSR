@@ -92,7 +92,7 @@ class Evaluator:
         self.logger.info(f"Brier Score:    {calib_metrics['brier']:.4f}")
         
         avg_entropy = np.mean(all_entropy)
-        avg_variance = np.mean(all_variance)
+        avg_variance = np.mean(np.concatenate(all_variance))
         self.logger.info(f"Mean Predictive Entropy: {avg_entropy:.4f}")
         self.logger.info(f"Mean Predictive Variance: {avg_variance:.4f}")
         
