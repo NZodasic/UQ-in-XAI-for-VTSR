@@ -4,12 +4,12 @@ experiment:
   device: "cuda"
 
 data:
-  train_images_dir: "train_data/images/train"
-  train_labels_dir: "train_data/labels/train"
-  val_images_dir: "train_data/images/val"
-  val_labels_dir: "train_data/labels/val"
-  test_images_dir: "train_data/images/test"
-  test_labels_dir: "train_data/labels/test"
+  train_images_dir: "data/train_data/images/train"
+  train_labels_dir: "data/train_data/labels/train"
+  val_images_dir: "data/train_data/images/val"
+  val_labels_dir: "data/train_data/labels/val"
+  test_images_dir: "data/train_data/images/test"
+  test_labels_dir: "data/train_data/labels/test"
   classes_file: "train_data/classes.txt"
   image_size: [224, 224]
   num_classes: 29

@@ -55,7 +55,12 @@ def main():
     logger.info(f"Initialized experiment in {save_dir}")
 
     # Set device
-    device = torch.device(config['experiment']['device'] if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     logger.info(f"Using device: {device}")
 
     # 2. Data processing
