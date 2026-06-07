@@ -1,0 +1,5 @@
+-r requirements.txt
+
+# Optional: only needed for augmentation/unified_augmentation.py.
+# Keep this below 2.x to avoid albucore/stringzilla build issues on fresh Linux setups.
+albumentations>=1.4.0,<2.0.0

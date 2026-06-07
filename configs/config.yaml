@@ -1,0 +1,71 @@
+# Configurations for TSR Experiment
+experiment:
+  seed: 42
+  device: "cuda"
+  deterministic: false
+  cudnn_benchmark: true
+  save_config: false
+  save_summary: false
+
+data:
+  train_images_dir: "Dataset/data2-augment/images/train"
+  train_labels_dir: "Dataset/data2-augment/labels/train"
+  val_images_dir: "Dataset/data2-augment/images/val"
+  val_labels_dir: "Dataset/data2-augment/labels/val"
+  test_images_dir: "Dataset/data2-augment/images/test"
+  test_labels_dir: "Dataset/data2-augment/labels/test"
+  classes_file: "Dataset/data2-augment/custom_data.yaml"
+  image_size: [224, 224]
+  num_classes: 29   # max_id + 1 = 28 + 1
+  batch_size: 192
+  num_workers: 4
+  pin_memory: true
+  prefetch_factor: 2
+  index_workers: 20
+  cache_index: true
+
+model:
+  name: "efficientnet_b2"   # "resnet50" | "efficientnet_b2" | "mobilenet_v2" | "densenet121"
+  dropout_rate: 0.4
+  pretrained: true
+
+training:
+  epochs: 12
+  learning_rate: 0.0004
+  optimizer: "adam"
+  weight_decay: 0.0001
+  patience: 3
+  label_smoothing: 0.1
+  grad_clip: 1.0
+  scheduler: "cosine"       # "cosine" | "none"
+  warmup_epochs: 1          # Linear warmup period
+  min_lr: 0.000001
+  mixed_precision: true     # Uses CUDA AMP when available
+  allow_tf32: true          # Faster matmul/convolution on NVIDIA Ampere+
+  use_class_weights: true
+  log_every_batches: 100
+  log_epoch_metrics: false
+  checkpoint:
+    save_every_epochs: 0        # 0 disables resumable checkpoints; use 1 to save every epoch
+    keep_last: 3                # Keep the latest N epoch checkpoints; 0 keeps all
+    resume_from: null           # Example: "EXPERIMENT/run_001/models/checkpoints/latest.pth"
+  tensorboard:
+    enabled: false
+    log_dir: "tensorboard"
+
+uncertainty:
+  method: "mc_dropout"
+  num_samples: 10           # Lower values reduce MC-dropout evaluation latency
+
+explainability:
+  generate: true
+  method: "gradcam"         # "gradcam" | "saliency" | "integrated_gradients"
+  variant: "gradcam++"      # for method="gradcam": "gradcam" | "gradcam++" | "eigencam" | "hirescam"
+  mc_samples: 5             # Number of forward passes for explanation uncertainty
+  steps: 24                 # for method="integrated_gradients"
+  compute_metrics: false
+  fidelity_mask_fraction: 0.2
+  stability_noise_std: 0.02
+
+calibration:
+  temperature_scaling: true  # post-hoc calibration sau khi train

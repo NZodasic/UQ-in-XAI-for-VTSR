@@ -1,0 +1,15 @@
+/Dataset
+/venv
+/.venv
+/data/__pycache__
+/augmentation/__pycache__
+/dataset_tools/__pycache__
+/EXPERIMENT
+/experiment_tools/__pycache__
+/explainability/__pycache__
+/metrics/__pycache__
+/models/__pycache__
+/training/__pycache__
+/utils/__pycache__
+/__pycache__
+/Experimental
