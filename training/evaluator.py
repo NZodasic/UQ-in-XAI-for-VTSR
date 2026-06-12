@@ -145,6 +145,9 @@ class Evaluator:
         if xai_method == 'integrated_gradients':
             return self._generate_integrated_gradients(num_samples, xai_cfg)
 
+        if xai_method == 'saliency':
+            return self._generate_saliency(num_samples, xai_cfg)
+
         if xai_method != 'gradcam':
             self.logger.warning(f"Unsupported XAI method '{xai_method}', skipping explanations.")
             return {}
@@ -318,6 +321,120 @@ class Evaluator:
             'variant': cam_method,
             'samples': samples_done,
             'mc_samples': mc_samples,
+            'avg_time_ms': avg_time_ms,
+            'fidelity': fidelity_mean,
+            'stability': stability_mean
+        }
+
+    def _generate_saliency(self, num_samples, xai_cfg):
+        try:
+            from explainability.saliency import SaliencyMap
+        except ImportError:
+            self.logger.warning("SaliencyMap not found, skipping explanations.")
+            return {}
+
+        self.logger.info("Generating Saliency explanations...")
+
+        compute_xai_metrics = bool(xai_cfg.get('compute_metrics', True))
+        saliency_gen = SaliencyMap(self.model)
+
+        save_path = os.path.join(self.save_dir, 'xai')
+        os.makedirs(save_path, exist_ok=True)
+
+        samples_done = 0
+        generation_times = []
+        fidelity_scores = []
+        stability_scores = []
+        self.model.eval()
+
+        for inputs, labels in self.dataloader:
+            inputs = inputs.to(self.device)
+            for i in range(inputs.size(0)):
+                if samples_done >= num_samples:
+                    break
+
+                single_input = inputs[i:i+1]
+                true_label = labels[i].item()
+
+                with torch.no_grad():
+                    outputs = self.model(single_input)
+                    probs = torch.softmax(outputs, dim=1)
+                    conf, predicted_label = probs.max(1)
+                    conf = conf.item()
+                    predicted_label = predicted_label.item()
+
+                if self.device.type == 'cuda':
+                    torch.cuda.synchronize()
+                start_time = time.time()
+                heatmap = saliency_gen.generate(single_input, target_class=predicted_label)
+                if self.device.type == 'cuda':
+                    torch.cuda.synchronize()
+                generation_times.append(time.time() - start_time)
+
+                if compute_xai_metrics:
+                    fidelity_scores.append(
+                        self._calculate_fidelity(single_input, predicted_label, heatmap, conf)
+                    )
+                    noisy_heatmap = saliency_gen.generate(
+                        self._noisy_input(single_input),
+                        target_class=predicted_label
+                    )
+                    stability_scores.append(self._calculate_stability(heatmap, noisy_heatmap))
+
+                mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1).to(self.device)
+                std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1).to(self.device)
+
+                img_tensor = single_input[0] * std + mean
+                img_np = img_tensor.detach().cpu().numpy().transpose(1, 2, 0)
+                img_np = np.clip(img_np, 0, 1)
+                img_np = (img_np * 255).astype(np.uint8)
+
+                heatmap_color = cv2.applyColorMap(np.uint8(255 * heatmap), cv2.COLORMAP_JET)
+                heatmap_color = cv2.cvtColor(heatmap_color, cv2.COLOR_BGR2RGB)
+                overlay = heatmap_color * 0.4 + img_np
+                overlay = np.clip(overlay, 0, 255).astype(np.uint8)
+
+                plt.figure(figsize=(15, 5))
+
+                plt.subplot(1, 3, 1)
+                plt.imshow(img_np)
+                class_name = self.classes.get(true_label, f"Class {true_label}")
+                plt.title(f"Original: {class_name}")
+                plt.axis('off')
+
+                plt.subplot(1, 3, 2)
+                pred_name = self.classes.get(predicted_label, f"Class {predicted_label}")
+                color = 'green' if predicted_label == true_label else 'red'
+                plt.text(0.5, 0.6, f"Pred: {pred_name}", fontsize=12, ha='center', color=color)
+                plt.text(0.5, 0.4, f"Conf: {conf:.4f}", fontsize=12, ha='center')
+                plt.title("Prediction Details")
+                plt.axis('off')
+
+                plt.subplot(1, 3, 3)
+                plt.imshow(overlay)
+                plt.title("Saliency")
+                plt.axis('off')
+
+                plt.tight_layout()
+                plt.savefig(os.path.join(save_path, f'saliency_sample_{samples_done}.png'))
+                plt.close()
+
+                samples_done += 1
+
+            if samples_done >= num_samples:
+                break
+
+        avg_time_ms = float(np.mean(generation_times) * 1000) if generation_times else 0.0
+        fidelity_mean = float(np.mean(fidelity_scores)) if fidelity_scores else None
+        stability_mean = float(np.mean(stability_scores)) if stability_scores else None
+        self.logger.info(
+            f"Generated {samples_done} Saliency explanations "
+            f"(avg {avg_time_ms:.2f} ms/sample)."
+        )
+        return {
+            'method': 'saliency',
+            'variant': 'saliency',
+            'samples': samples_done,
             'avg_time_ms': avg_time_ms,
             'fidelity': fidelity_mean,
             'stability': stability_mean

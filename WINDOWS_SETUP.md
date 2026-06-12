@@ -49,6 +49,30 @@ benchmark.bat --suite full
 
 Benchmark results are combined into `EXPERIMENT\benchmark_results.csv`, and each run folder includes its group/model/method name.
 
+Run folders are organized by model:
+
+```text
+EXPERIMENT\
+  benchmark_results.csv
+  graphs\
+  model\
+    resnet50\
+      run_001_backbone_resnet50_resnet50\
+      run_002_xai_resnet50_gradcam\
+    efficientnet_b2\
+      run_001_backbone_efficientnet_b2_efficientnet_b2\
+      run_002_uq_efficientnet_b2_no_calibration\
+```
+
+`--suite full` runs the backbone table, the UQ table on EfficientNet-B2, and XAI runs for all supported models:
+
+```text
+resnet50: gradcam, gradcam++, eigencam, hirescam, saliency, integrated_gradients
+efficientnet_b2: gradcam, gradcam++, eigencam, hirescam, saliency, integrated_gradients
+mobilenet_v2: gradcam, gradcam++, eigencam, hirescam, saliency, integrated_gradients
+densenet121: gradcam, gradcam++, eigencam, hirescam, saliency, integrated_gradients
+```
+
 `benchmark.bat` is tuned for stable faster comparison runs by default:
 
 ```text
@@ -59,6 +83,12 @@ Override those values when you want a longer run:
 
 ```bat
 benchmark.bat --suite full --epochs 8 --patience 3 --batch-size 128
+```
+
+To run the XAI comparison on only one model:
+
+```bat
+benchmark.bat --suite xai --xai-model efficientnet_b2
 ```
 
 ## Useful options

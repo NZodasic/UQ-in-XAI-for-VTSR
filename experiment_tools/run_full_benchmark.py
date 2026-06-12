@@ -9,6 +9,16 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+SUPPORTED_MODELS = ["resnet50", "efficientnet_b2", "mobilenet_v2", "densenet121"]
+XAI_RUNS = [
+    ("gradcam", ["explainability.method=gradcam", "explainability.variant=gradcam"]),
+    ("gradcam++", ["explainability.method=gradcam", "explainability.variant=gradcam++"]),
+    ("eigencam", ["explainability.method=gradcam", "explainability.variant=eigencam"]),
+    ("hirescam", ["explainability.method=gradcam", "explainability.variant=hirescam"]),
+    ("saliency", ["explainability.method=saliency", "explainability.variant=saliency"]),
+    ("integrated_gradients", ["explainability.method=integrated_gradients"]),
+]
+
 
 def _run_command(command):
     print("Running:", " ".join(command), flush=True)
@@ -29,6 +39,17 @@ def _latest_run_dir(experiment_dir):
     if not runs:
         raise RuntimeError(f"No run directories found in {experiment_dir}")
     return runs[-1]
+
+
+def _discover_run_dirs(experiment_dir):
+    experiment_dir = Path(experiment_dir)
+    return sorted(
+        [
+            path
+            for path in list(experiment_dir.glob("run_*")) + list((experiment_dir / "model").glob("*/run_*"))
+            if path.is_dir()
+        ]
+    )
 
 
 def _append_metadata(summary_csv, metadata):
@@ -88,6 +109,15 @@ def _run_number_prefix(run_dir):
     return match.group(1) if match else Path(run_dir).name
 
 
+def _next_model_run_prefix(model_dir):
+    run_nums = []
+    for path in model_dir.glob("run_*"):
+        match = re.match(r"^run_(\d+)", path.name)
+        if match:
+            run_nums.append(int(match.group(1)))
+    return f"run_{max(run_nums, default=0) + 1:03d}"
+
+
 def _benchmark_metadata(item, index, total, run_dir):
     group = item.get("group", "")
     label = item.get("label", "")
@@ -119,16 +149,28 @@ def _benchmark_metadata(item, index, total, run_dir):
     }
 
 
-def _rename_run_dir(run_dir, item):
-    run_dir = Path(run_dir)
-    model_name = item.get("model", "")
+def _nested_run_name(run_prefix, item):
     parts = [
-        _run_number_prefix(run_dir),
+        run_prefix,
         _safe_name(item.get("group", "")),
-        _safe_name(model_name),
+        _safe_name(item.get("model", "")),
         _safe_name(item.get("label", "")),
     ]
-    target = run_dir.with_name("_".join(part for part in parts if part))
+    return "_".join(part for part in parts if part)
+
+
+def _organize_run_dir(run_dir, item, experiment_dir):
+    run_dir = Path(run_dir)
+    model_name = _safe_name(item.get("model", "unknown_model"))
+    model_dir = Path(experiment_dir) / "model" / model_name
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    if run_dir.parent == model_dir:
+        run_prefix = _run_number_prefix(run_dir)
+    else:
+        run_prefix = _next_model_run_prefix(model_dir)
+
+    target = model_dir / _nested_run_name(run_prefix, item)
     if target == run_dir:
         return run_dir
 
@@ -140,10 +182,10 @@ def _rename_run_dir(run_dir, item):
 
     try:
         run_dir.rename(candidate)
-        print(f"Renamed run folder: {run_dir.name} -> {candidate.name}", flush=True)
+        print(f"Moved run folder: {run_dir} -> {candidate}", flush=True)
         return candidate
     except OSError as exc:
-        print(f"Warning: could not rename {run_dir} to {candidate}: {exc}", flush=True)
+        print(f"Warning: could not move {run_dir} to {candidate}: {exc}", flush=True)
         return run_dir
 
 
@@ -159,7 +201,7 @@ def _item_from_summary(row):
 
 def collect_existing_runs(experiment_dir, output_path, rename_runs=True):
     run_dirs = []
-    candidates = sorted(Path(experiment_dir).glob("run_*"))
+    candidates = _discover_run_dirs(experiment_dir)
     total = len([path for path in candidates if (path / "metrics_summary.csv").exists()])
 
     for index, run_dir in enumerate(candidates, start=1):
@@ -173,7 +215,7 @@ def collect_existing_runs(experiment_dir, output_path, rename_runs=True):
             continue
 
         item = _item_from_summary(rows[0])
-        named_run_dir = _rename_run_dir(run_dir, item) if rename_runs else run_dir
+        named_run_dir = _organize_run_dir(run_dir, item, experiment_dir) if rename_runs else run_dir
         metadata = _benchmark_metadata(item, index, total, named_run_dir)
         _append_metadata(named_run_dir / "metrics_summary.csv", metadata)
         run_dirs.append(named_run_dir)
@@ -248,6 +290,7 @@ def _xai_label(row):
         "gradcam++": "GradCAM++",
         "eigencam": "EigenCAM",
         "hirescam": "HiResCAM",
+        "saliency": "Saliency",
         "integrated_gradients": "Integrated Gradients",
     }
     return labels.get(label, label)
@@ -339,6 +382,27 @@ def _run_suffix(item):
     )
 
 
+def _resolve_xai_models(value):
+    raw_models = [
+        item.strip().lower()
+        for item in str(value or "").split(",")
+        if item.strip()
+    ]
+    if not raw_models or raw_models == ["all"]:
+        return SUPPORTED_MODELS
+
+    invalid = [model_name for model_name in raw_models if model_name not in SUPPORTED_MODELS]
+    if invalid:
+        raise ValueError(
+            "Unknown XAI model(s): "
+            + ", ".join(invalid)
+            + ". Choose from "
+            + ", ".join(SUPPORTED_MODELS)
+            + ", or use all."
+        )
+    return raw_models
+
+
 def benchmark_plan(args):
     quick_overrides = []
     if args.epochs is not None:
@@ -370,7 +434,7 @@ def benchmark_plan(args):
     plan = []
 
     if args.suite in {"full", "backbone"}:
-        for model_name in ["mobilenet_v2", "resnet50", "densenet121", "efficientnet_b2"]:
+        for model_name in SUPPORTED_MODELS:
             plan.append({
                 "group": "backbone",
                 "label": model_name,
@@ -427,25 +491,19 @@ def benchmark_plan(args):
             })
 
     if args.suite in {"full", "xai"}:
-        xai_runs = [
-            ("gradcam", ["explainability.method=gradcam", "explainability.variant=gradcam"]),
-            ("gradcam++", ["explainability.method=gradcam", "explainability.variant=gradcam++"]),
-            ("eigencam", ["explainability.method=gradcam", "explainability.variant=eigencam"]),
-            ("hirescam", ["explainability.method=gradcam", "explainability.variant=hirescam"]),
-            ("integrated_gradients", ["explainability.method=integrated_gradients"]),
-        ]
-        for label, overrides in xai_runs:
-            plan.append({
-                "group": "xai",
-                "label": label,
-                "model": args.xai_model,
-                "overrides": common + [
-                    f"model.name={args.xai_model}",
-                    "uncertainty.method=mc_dropout",
-                    "calibration.temperature_scaling=true",
-                    "explainability.generate=true",
-                ] + overrides,
-            })
+        for model_name in _resolve_xai_models(args.xai_model):
+            for label, overrides in XAI_RUNS:
+                plan.append({
+                    "group": "xai",
+                    "label": label,
+                    "model": model_name,
+                    "overrides": common + [
+                        f"model.name={model_name}",
+                        "uncertainty.method=mc_dropout",
+                        "calibration.temperature_scaling=true",
+                        "explainability.generate=true",
+                    ] + overrides,
+                })
 
     if args.only_labels:
         wanted = {
@@ -498,7 +556,14 @@ def main():
     parser.add_argument("--xai-mc-samples", type=int, default=None)
     parser.add_argument("--ig-steps", type=int, default=None)
     parser.add_argument("--uq-model", default="efficientnet_b2")
-    parser.add_argument("--xai-model", default="efficientnet_b2")
+    parser.add_argument(
+        "--xai-model",
+        default="all",
+        help=(
+            "Model(s) for XAI comparisons: all, one supported model, or a comma-separated "
+            "list. Default: all."
+        ),
+    )
     parser.add_argument(
         "--only-labels",
         action="append",
@@ -510,7 +575,11 @@ def main():
     parser.add_argument("--tensorboard", action="store_true")
     parser.add_argument("--skip-xai-metrics", action="store_true")
     parser.add_argument("--collect-existing", action="store_true")
-    parser.add_argument("--no-rename-runs", action="store_true")
+    parser.add_argument(
+        "--no-rename-runs",
+        action="store_true",
+        help="When collecting existing runs, do not move them into EXPERIMENT/model/<model_name>/ folders.",
+    )
     parser.add_argument("--export-thesis-tables", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -542,7 +611,7 @@ def main():
 
         _run_command(command)
         run_dir = _latest_run_dir(args.experiment_dir)
-        run_dir = _rename_run_dir(run_dir, item)
+        run_dir = _organize_run_dir(run_dir, item, args.experiment_dir)
         run_dirs.append(run_dir)
         summary_csv = run_dir / "metrics_summary.csv"
         _append_metadata(

@@ -97,9 +97,27 @@ benchmark.bat --suite full --epochs 5 --patience 2 --batch-size 128
 
 The benchmark writes:
 - one combined table at `EXPERIMENT/benchmark_results.csv`, updated after each completed run
-- named run folders such as `run_006_uq_efficientnet_b2_no_calibration`
 - graphs in `EXPERIMENT/graphs/`
-- per-run summaries in each `EXPERIMENT/run_*`
+- per-model run folders under `EXPERIMENT/model/<model_name>/`, with numbering restarted inside each model folder
+- per-run summaries in each nested run folder
+
+By default, `--suite full` runs backbone comparisons, UQ comparisons on EfficientNet-B2, and XAI comparisons for every supported backbone (`resnet50`, `efficientnet_b2`, `mobilenet_v2`, `densenet121`) across `gradcam`, `gradcam++`, `eigencam`, `hirescam`, `saliency`, and `integrated_gradients`. To limit XAI to one model, add for example `--xai-model efficientnet_b2`.
+
+Example benchmark layout:
+```text
+EXPERIMENT/
+  benchmark_results.csv
+  graphs/
+  model/
+    resnet50/
+      run_001_backbone_resnet50_resnet50/
+      run_002_xai_resnet50_gradcam/
+      run_003_xai_resnet50_gradcamplusplus/
+    efficientnet_b2/
+      run_001_backbone_efficientnet_b2_efficientnet_b2/
+      run_002_uq_efficientnet_b2_no_calibration/
+      run_007_xai_efficientnet_b2_gradcam/
+```
 
 Override individual config values from the command line when running comparison experiments:
 ```bash
@@ -109,6 +127,7 @@ python main.py --config configs/config.yaml --set model.name=densenet121
 python main.py --config configs/config.yaml --set calibration.temperature_scaling=false --set uncertainty.method=none
 python main.py --config configs/config.yaml --set explainability.variant=eigencam
 python main.py --config configs/config.yaml --set explainability.variant=hirescam
+python main.py --config configs/config.yaml --set explainability.method=saliency
 python main.py --config configs/config.yaml --set explainability.method=integrated_gradients
 ```
 
@@ -139,7 +158,7 @@ All settings are controlled via `configs/config.yaml`. Key sections include:
 Recommended thesis comparison runs:
 - Backbone table: fix UQ/calibration settings, then run `mobilenet_v2`, `resnet50`, `densenet121`, and `efficientnet_b2`.
 - UQ table: fix `model.name=efficientnet_b2`, compare `uncertainty.method=none`, `calibration.temperature_scaling=true`, and `uncertainty.method=mc_dropout`.
-- XAI table: fix the trained model/backbone, then compare `gradcam`, `gradcam++`, `eigencam`, `hirescam`, and `integrated_gradients` using the generated XAI timing field.
+- XAI table: compare `gradcam`, `gradcam++`, `eigencam`, `hirescam`, `saliency`, and `integrated_gradients` for each supported backbone using the generated XAI timing field.
 
 ---
 
