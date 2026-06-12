@@ -101,7 +101,7 @@ The benchmark writes:
 - per-model run folders under `EXPERIMENT/model/<model_name>/`, with numbering restarted inside each model folder
 - per-run summaries in each nested run folder
 
-By default, `--suite full` runs backbone comparisons, UQ comparisons on EfficientNet-B2, and XAI comparisons for every supported backbone (`resnet50`, `efficientnet_b2`, `mobilenet_v2`, `densenet121`) across `gradcam`, `gradcam++`, `eigencam`, `hirescam`, `saliency`, and `integrated_gradients`. To limit XAI to one model, add for example `--xai-model efficientnet_b2`.
+By default, `--suite full` runs backbone comparisons, UQ comparisons on EfficientNet-B2, and XAI comparisons for every supported backbone (`resnet50`, `efficientnet_b2`, `mobilenet_v2`, `densenet121`) across `gradcam`, `gradcam++`, `eigencam`, `hirescam`, `saliency`, and `integrated_gradients`. For the XAI comparison, each backbone is trained once, then the six XAI methods are generated from the same saved checkpoint. To limit XAI to one model, add for example `--xai-model efficientnet_b2`.
 
 Example benchmark layout:
 ```text
@@ -110,13 +110,14 @@ EXPERIMENT/
   graphs/
   model/
     resnet50/
-      run_001_backbone_resnet50_resnet50/
+      run_001_xai_train_resnet50_train_checkpoint/
       run_002_xai_resnet50_gradcam/
       run_003_xai_resnet50_gradcamplusplus/
     efficientnet_b2/
       run_001_backbone_efficientnet_b2_efficientnet_b2/
       run_002_uq_efficientnet_b2_no_calibration/
-      run_007_xai_efficientnet_b2_gradcam/
+      run_007_xai_train_efficientnet_b2_train_checkpoint/
+      run_008_xai_efficientnet_b2_gradcam/
 ```
 
 Override individual config values from the command line when running comparison experiments:
@@ -158,15 +159,24 @@ All settings are controlled via `configs/config.yaml`. Key sections include:
 Recommended thesis comparison runs:
 - Backbone table: fix UQ/calibration settings, then run `mobilenet_v2`, `resnet50`, `densenet121`, and `efficientnet_b2`.
 - UQ table: fix `model.name=efficientnet_b2`, compare `uncertainty.method=none`, `calibration.temperature_scaling=true`, and `uncertainty.method=mc_dropout`.
-- XAI table: compare `gradcam`, `gradcam++`, `eigencam`, `hirescam`, `saliency`, and `integrated_gradients` for each supported backbone using the generated XAI timing field.
+- XAI table: train each supported backbone once, then compare `gradcam`, `gradcam++`, `eigencam`, `hirescam`, `saliency`, and `integrated_gradients` from the same checkpoint using the generated XAI timing field.
 
 ---
+##Note on GPU machine:
+Run this from the project root on the new computer:
 
-## Citation
+```bat
+benchmark.bat --suite xai --epochs 10 --patience 3 --only-labels gradcam++,eigencam,hirescam
+```
 
-If you use this framework in your research, please consider citing this project as part of the **Vietnamese Traffic Sign Recognition (VTSR) Research Series**.
+If you want only one backbone/model, add this, for example:
 
----
+```bat
+benchmark.bat --suite xai --epochs 10 --patience 3 --xai-model efficientnet_b2 --only-labels gradcam++,eigencam,hirescam
+```
 
-## License
-This project is licensed under the MIT License.
+Direct Python version:
+
+```bash
+python experiment_tools/run_full_benchmark.py --config configs/config.yaml --suite xai --epochs 10 --patience 3 --only-labels gradcam++,eigencam,hirescam
+```

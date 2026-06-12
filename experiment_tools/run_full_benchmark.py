@@ -124,6 +124,8 @@ def _benchmark_metadata(item, index, total, run_dir):
     model_name = item.get("model", "")
     if group == "backbone":
         method_label = _model_label(model_name)
+    elif group == "xai_train":
+        method_label = "Train Checkpoint"
     elif group == "uq":
         method_label = _method_label({"benchmark_label": label})
     elif group == "xai":
@@ -131,7 +133,7 @@ def _benchmark_metadata(item, index, total, run_dir):
     else:
         method_label = label
 
-    return {
+    metadata = {
         "run_dir": str(run_dir),
         "benchmark_run_name": Path(run_dir).name,
         "benchmark_index": index,
@@ -147,6 +149,9 @@ def _benchmark_metadata(item, index, total, run_dir):
         "uq_label": label if group == "uq" else "",
         "xai_label": label if group == "xai" else "",
     }
+    if item.get("source_checkpoint"):
+        metadata["source_checkpoint"] = str(item["source_checkpoint"])
+    return metadata
 
 
 def _nested_run_name(run_prefix, item):
@@ -372,6 +377,12 @@ def _main_command(config, overrides):
     return command
 
 
+def _xai_eval_command(config, overrides, weights_path):
+    command = _main_command(config, overrides)
+    command.extend(["--eval-only", "--weights", str(weights_path)])
+    return command
+
+
 def _run_suffix(item):
     return "_".join(
         part for part in [
@@ -430,6 +441,12 @@ def benchmark_plan(args):
         f"training.tensorboard.enabled={str(args.tensorboard).lower()}",
         f"explainability.compute_metrics={str(not args.skip_xai_metrics).lower()}",
     ] + quick_overrides
+
+    train_common = [
+        override
+        for override in common
+        if not override.startswith("explainability.compute_metrics=")
+    ]
 
     plan = []
 
@@ -492,6 +509,19 @@ def benchmark_plan(args):
 
     if args.suite in {"full", "xai"}:
         for model_name in _resolve_xai_models(args.xai_model):
+            plan.append({
+                "group": "xai_train",
+                "label": "train_checkpoint",
+                "model": model_name,
+                "overrides": train_common + [
+                    f"model.name={model_name}",
+                    "uncertainty.method=mc_dropout",
+                    "calibration.temperature_scaling=true",
+                    "explainability.generate=false",
+                    "explainability.method=gradcam",
+                    "explainability.variant=gradcam++",
+                ],
+            })
             for label, overrides in XAI_RUNS:
                 plan.append({
                     "group": "xai",
@@ -512,7 +542,17 @@ def benchmark_plan(args):
             for label in raw_label.split(",")
             if label.strip()
         }
-        plan = [item for item in plan if item["label"] in wanted]
+        selected_xai_models = {
+            item["model"]
+            for item in plan
+            if item["group"] == "xai" and item["label"] in wanted
+        }
+        plan = [
+            item
+            for item in plan
+            if item["label"] in wanted
+            or (item["group"] == "xai_train" and item["model"] in selected_xai_models)
+        ]
 
     return plan
 
@@ -600,10 +640,20 @@ def main():
     print(f"Benchmark budget: {_format_run_budget(args)}", flush=True)
 
     run_dirs = []
+    xai_checkpoints = {}
     completed_count = 0
     for index, item in enumerate(plan, start=1):
         print(f"[{index}/{len(plan)}] {item['group']} - {item['label']}", flush=True)
-        command = _main_command(args.config, item["overrides"])
+        if item["group"] == "xai":
+            weights_path = xai_checkpoints.get(item["model"])
+            if args.dry_run:
+                weights_path = Path(args.experiment_dir) / "model" / item["model"] / "<xai_train_run>" / "models" / "best_model.pth"
+            elif not weights_path:
+                raise RuntimeError(f"No trained checkpoint available for XAI model {item['model']}.")
+            item["source_checkpoint"] = str(weights_path)
+            command = _xai_eval_command(args.config, item["overrides"], weights_path)
+        else:
+            command = _main_command(args.config, item["overrides"])
         command.extend(["--run-suffix", _run_suffix(item)])
         if args.dry_run:
             print(" ".join(command))
@@ -618,6 +668,11 @@ def main():
             summary_csv,
             _benchmark_metadata(item, index, len(plan), run_dir)
         )
+        if item["group"] == "xai_train":
+            checkpoint_path = run_dir / "models" / "best_model.pth"
+            if not checkpoint_path.exists():
+                raise RuntimeError(f"Expected trained checkpoint was not found: {checkpoint_path}")
+            xai_checkpoints[item["model"]] = checkpoint_path
         completed_count, output_path = _collect_run_summaries(run_dirs, comparison_csv)
         print(f"Updated combined CSV: {output_path} ({completed_count} rows)", flush=True)
 

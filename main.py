@@ -290,6 +290,17 @@ def main():
         help='Path to a resumable checkpoint, e.g. EXPERIMENT/run_001/models/checkpoints/latest.pth'
     )
     parser.add_argument(
+        '--weights',
+        type=str,
+        default=None,
+        help='Path to model weights for evaluation/XAI-only runs, e.g. EXPERIMENT/run_001/models/best_model.pth'
+    )
+    parser.add_argument(
+        '--eval-only',
+        action='store_true',
+        help='Skip training and evaluate/generate XAI from --weights.'
+    )
+    parser.add_argument(
         '--run-suffix',
         type=str,
         default=None,
@@ -312,6 +323,8 @@ def main():
     apply_config_overrides(config, args.set)
     if args.resume:
         config.setdefault('training', {}).setdefault('checkpoint', {})['resume_from'] = args.resume
+    if args.eval_only and not args.weights:
+        raise ValueError("--eval-only requires --weights.")
 
     # Setup run directory
     save_dir = get_next_run_dir(suffix=args.run_suffix)
@@ -393,43 +406,49 @@ def main():
     logger.info(f"Uncertainty method: {config['uncertainty']['method']}")
     logger.info(f"Explanation method: {config['explainability']['method']}\n")
 
-    # 5. Optimizer
-    lr = config['training']['learning_rate']
-    wd = config['training']['weight_decay']
-    if config['training']['optimizer'].lower() == 'adam':
-        optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
-    else:
-        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=wd)
-
-    # 6. Training
-    trainer = Trainer(
-        model=model,
-        optimizer=optimizer,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        device=device,
-        logger=logger,
-        save_dir=save_dir,
-        config=config
-    )
-
-    resume_from = config.get('training', {}).get('checkpoint', {}).get('resume_from')
-    if resume_from:
-        trainer.load_checkpoint(resume_from)
-
-    train_losses, val_losses, val_accuracies = trainer.train(config['training']['epochs'])
-    os.makedirs(os.path.join(save_dir, 'plots'), exist_ok=True)
-    plot_training_curves(
-        train_losses, val_losses, val_accuracies,
-        os.path.join(save_dir, 'plots')
-    )
-
-    # Load best model
-    best_path = os.path.join(save_dir, 'models', 'best_model.pth')
-    if os.path.exists(best_path):
-        model.load_state_dict(torch.load(best_path, map_location=device, weights_only=True))
+    train_losses, val_losses, val_accuracies = [], [], []
+    if args.eval_only:
+        logger.info(f"Evaluation-only mode: loading weights from {args.weights}")
+        model.load_state_dict(torch.load(args.weights, map_location=device, weights_only=True))
         model.eval()
-        logger.info("Loaded best model checkpoint.")
+    else:
+        # 5. Optimizer
+        lr = config['training']['learning_rate']
+        wd = config['training']['weight_decay']
+        if config['training']['optimizer'].lower() == 'adam':
+            optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
+        else:
+            optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=wd)
+
+        # 6. Training
+        trainer = Trainer(
+            model=model,
+            optimizer=optimizer,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            device=device,
+            logger=logger,
+            save_dir=save_dir,
+            config=config
+        )
+
+        resume_from = config.get('training', {}).get('checkpoint', {}).get('resume_from')
+        if resume_from:
+            trainer.load_checkpoint(resume_from)
+
+        train_losses, val_losses, val_accuracies = trainer.train(config['training']['epochs'])
+        os.makedirs(os.path.join(save_dir, 'plots'), exist_ok=True)
+        plot_training_curves(
+            train_losses, val_losses, val_accuracies,
+            os.path.join(save_dir, 'plots')
+        )
+
+        # Load best model
+        best_path = os.path.join(save_dir, 'models', 'best_model.pth')
+        if os.path.exists(best_path):
+            model.load_state_dict(torch.load(best_path, map_location=device, weights_only=True))
+            model.eval()
+            logger.info("Loaded best model checkpoint.")
 
     # 7. Temperature Scaling (post-hoc calibration)
     calibration_cfg = config.get('calibration', {})
@@ -438,7 +457,9 @@ def main():
     best_val_acc = max(val_accuracies, default=0.0)
     eval_model = model
     temperature_value = None
-    if use_temp_scaling and val_size > 0 and best_val_acc >= min_calibration_acc:
+    if args.eval_only and use_temp_scaling:
+        logger.info("Skipping Temperature Scaling in evaluation-only mode.")
+    elif use_temp_scaling and val_size > 0 and best_val_acc >= min_calibration_acc:
         from models.temperature_scaling import TemperatureScaling
         ts = TemperatureScaling()
         eval_model, T = ts.calibrate_model(model, val_loader, device, logger)

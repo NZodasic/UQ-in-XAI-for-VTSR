@@ -7,6 +7,7 @@ param(
     [ValidateSet("cu128", "cu126", "cu118", "cpu")]
     [string]$TorchIndex = "cu128",
     [string]$CudaToolkitVersion = "12.8",
+    [switch]$InstallCudaToolkit,
     [switch]$SkipCudaToolkit,
     [switch]$SkipOptional,
     [switch]$ForceRecreateVenv,
@@ -99,6 +100,52 @@ function Test-NvidiaGpu {
     } catch {
         return $false
     }
+}
+
+function Test-CudaToolkitInstalled {
+    $nvcc = Get-Command nvcc.exe -ErrorAction SilentlyContinue
+    if ($nvcc) {
+        Write-Host "CUDA Toolkit detected: $($nvcc.Source)"
+        return $true
+    }
+
+    foreach ($envName in @("CUDA_PATH", "CUDA_HOME")) {
+        $envValue = [Environment]::GetEnvironmentVariable($envName)
+        if ($envValue) {
+            $candidate = Join-Path $envValue "bin\nvcc.exe"
+            if (Test-Path $candidate) {
+                Write-Host "CUDA Toolkit detected via ${envName}: $envValue"
+                return $true
+            }
+        }
+    }
+
+    $cudaRoot = Join-Path $env:ProgramFiles "NVIDIA GPU Computing Toolkit\CUDA"
+    if (Test-Path $cudaRoot) {
+        $candidate = Get-ChildItem $cudaRoot -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending |
+            ForEach-Object { Join-Path $_.FullName "bin\nvcc.exe" } |
+            Where-Object { Test-Path $_ } |
+            Select-Object -First 1
+        if ($candidate) {
+            Write-Host "CUDA Toolkit detected: $candidate"
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Test-PythonCudaAvailable {
+    param([string]$PythonExe)
+
+    if (-not (Test-Path $PythonExe)) {
+        return $false
+    }
+
+    $code = "import torch; raise SystemExit(0 if torch.cuda.is_available() else 1)"
+    & $PythonExe -c $code 2>$null
+    return ($LASTEXITCODE -eq 0)
 }
 
 function Get-PythonExe {
@@ -249,7 +296,22 @@ Write-Host "Python: $pythonExe"
 if ($TorchIndex -ne "cpu") {
     Write-Step "Checking NVIDIA/CUDA tooling"
     if (Test-NvidiaGpu) {
-        if (-not $SkipCudaToolkit) {
+        $nvidiaSmi = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
+        if ($nvidiaSmi) {
+            & $nvidiaSmi.Source
+        } else {
+            Write-Warning "nvidia-smi.exe was not found. Install/update the NVIDIA display driver or reboot if CUDA was just installed."
+        }
+
+        $cudaToolkitInstalled = Test-CudaToolkitInstalled
+        if ($SkipCudaToolkit) {
+            Write-Host "Skipping CUDA Toolkit installation because -SkipCudaToolkit was provided."
+        } elseif ($cudaToolkitInstalled) {
+            Write-Host "Skipping CUDA Toolkit installation because it is already installed."
+        } elseif (-not $InstallCudaToolkit) {
+            Write-Host "Skipping CUDA Toolkit installation by default. PyTorch installs its own CUDA runtime; a working NVIDIA driver is enough for training."
+            Write-Host "Use -InstallCudaToolkit if you specifically need nvcc/development toolkit files."
+        } else {
             try {
                 Invoke-WingetInstall -Id "Nvidia.CUDA" -Version $CudaToolkitVersion
             } catch {
@@ -261,13 +323,6 @@ if ($TorchIndex -ne "cpu") {
                     Write-Warning "Continuing because PyTorch installs its own CUDA runtime. A working NVIDIA driver is still required."
                 }
             }
-        }
-
-        $nvidiaSmi = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
-        if ($nvidiaSmi) {
-            & $nvidiaSmi.Source
-        } else {
-            Write-Warning "nvidia-smi.exe was not found. Install/update the NVIDIA display driver or reboot if CUDA was just installed."
         }
     } else {
         Write-Warning "No NVIDIA GPU was detected. CUDA PyTorch will install, but training must use CPU unless an NVIDIA GPU/driver is available."
@@ -293,13 +348,17 @@ if (-not (Test-Path $venvPython)) {
 Write-Step "Upgrading pip tooling"
 Invoke-External $venvPython @("-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel")
 
-Write-Step "Installing PyTorch ($TorchIndex)"
-Invoke-External $venvPython @(
-    "-m", "pip", "install",
-    "torch",
-    "torchvision",
-    "--index-url", "https://download.pytorch.org/whl/$TorchIndex"
-)
+if ($TorchIndex -ne "cpu" -and (Test-PythonCudaAvailable -PythonExe $venvPython)) {
+    Write-Step "PyTorch CUDA already works; skipping PyTorch reinstall"
+} else {
+    Write-Step "Installing PyTorch ($TorchIndex)"
+    Invoke-External $venvPython @(
+        "-m", "pip", "install",
+        "torch",
+        "torchvision",
+        "--index-url", "https://download.pytorch.org/whl/$TorchIndex"
+    )
+}
 
 Write-Step "Installing project requirements"
 Invoke-External $venvPython @("-m", "pip", "install", "-r", "requirements.txt")

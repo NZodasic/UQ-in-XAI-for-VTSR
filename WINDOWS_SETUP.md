@@ -25,14 +25,14 @@ The script installs/checks:
 - Python 3.11
 - Microsoft Visual C++ runtime
 - Git, if missing
-- NVIDIA CUDA Toolkit 12.8, if an NVIDIA GPU is detected
+- NVIDIA GPU/driver availability
 - `venv`
 - PyTorch CUDA wheels
 - all repository requirements
 
 It also updates `configs\config.yaml` to use your dataset path and keeps the original first-run config at `configs\config.yaml.bak`.
 
-PyTorch includes the CUDA runtime it needs, but the machine still needs a working NVIDIA driver. If setup finishes with `CUDA available: False`, reboot first, then update/install the NVIDIA display driver and run setup again.
+PyTorch includes the CUDA runtime it needs, so the script skips CUDA Toolkit installation by default. The machine still needs a working NVIDIA driver. If setup finishes with `CUDA available: False`, reboot first, then update/install the NVIDIA display driver and run setup again. Use `-InstallCudaToolkit` only if you specifically need `nvcc` or CUDA development toolkit files.
 
 ## Train
 
@@ -57,14 +57,14 @@ EXPERIMENT\
   graphs\
   model\
     resnet50\
-      run_001_backbone_resnet50_resnet50\
+      run_001_xai_train_resnet50_train_checkpoint\
       run_002_xai_resnet50_gradcam\
     efficientnet_b2\
       run_001_backbone_efficientnet_b2_efficientnet_b2\
       run_002_uq_efficientnet_b2_no_calibration\
 ```
 
-`--suite full` runs the backbone table, the UQ table on EfficientNet-B2, and XAI runs for all supported models:
+`--suite full` runs the backbone table, the UQ table on EfficientNet-B2, and XAI runs for all supported models. For XAI, each model is trained once, then all XAI methods reuse that model checkpoint:
 
 ```text
 resnet50: gradcam, gradcam++, eigencam, hirescam, saliency, integrated_gradients
@@ -95,6 +95,7 @@ benchmark.bat --suite xai --xai-model efficientnet_b2
 
 ```bat
 setup_windows.bat -DatasetRoot "D:\path\to\data2-augment" -RunSmokeTest
-setup_windows.bat -TorchIndex cpu -SkipCudaToolkit
+setup_windows.bat -DatasetRoot "D:\path\to\data2-augment" -InstallCudaToolkit
+setup_windows.bat -TorchIndex cpu
 setup_windows.bat -ForceRecreateVenv
 ```
