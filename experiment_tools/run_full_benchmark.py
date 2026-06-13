@@ -10,6 +10,33 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 SUPPORTED_MODELS = ["resnet50", "efficientnet_b2", "mobilenet_v2", "densenet121"]
+UQ_RUNS = [
+    ("no_calibration", [
+        "uncertainty.method=none",
+        "calibration.temperature_scaling=false",
+        "training.label_smoothing=0.0",
+    ]),
+    ("label_smoothing", [
+        "uncertainty.method=none",
+        "calibration.temperature_scaling=false",
+        "training.label_smoothing=0.1",
+    ]),
+    ("temperature_scaling", [
+        "uncertainty.method=none",
+        "calibration.temperature_scaling=true",
+        "training.label_smoothing=0.0",
+    ]),
+    ("mc_dropout", [
+        "uncertainty.method=mc_dropout",
+        "calibration.temperature_scaling=false",
+        "training.label_smoothing=0.1",
+    ]),
+    ("mc_dropout_temperature_scaling", [
+        "uncertainty.method=mc_dropout",
+        "calibration.temperature_scaling=true",
+        "training.label_smoothing=0.1",
+    ]),
+]
 XAI_RUNS = [
     ("gradcam", ["explainability.method=gradcam", "explainability.variant=gradcam"]),
     ("gradcam++", ["explainability.method=gradcam", "explainability.variant=gradcam++"]),
@@ -334,6 +361,25 @@ def export_thesis_tables(benchmark_csv, output_dir):
             "Comp. Time (ms)": _format_float(row.get("xai_time_ms"), digits=2),
         })
 
+    model_xai_uq_table = []
+    for row in xai_rows:
+        uses_mc_dropout = row.get("uq_method") == "mc_dropout"
+        uses_temperature = str(row.get("temperature_scaling", "")).lower() == "true"
+        uq_label = "TS + MC Dropout" if uses_mc_dropout and uses_temperature else row.get("uq_method", "")
+        model_xai_uq_table.append({
+            "Model": _model_label(row.get("model_name", "")),
+            "XAI Method": _xai_label(row),
+            "UQ Method": uq_label,
+            "Accuracy": _format_float(row.get("accuracy")),
+            "F1-macro": _format_float(row.get("f1_macro")),
+            "ECE": _format_float(row.get("ece")),
+            "NLL": _format_float(row.get("nll")),
+            "Predictive Entropy": _format_float(row.get("predictive_entropy_mean")),
+            "Probability Variance": _format_float(row.get("probability_variance_mean"), digits=6),
+            "XAI Time (ms)": _format_float(row.get("xai_time_ms"), digits=2),
+            "Params (M)": _format_params(row.get("num_params_m")),
+        })
+
     backbone_rows = [
         row for row in rows
         if row.get("experiment_group") == "backbone"
@@ -367,6 +413,25 @@ def export_thesis_tables(benchmark_csv, output_dir):
             model_table,
         ),
     ]
+    outputs.append(
+        _write_table(
+            output_dir / "All-Models-Top3-XAI-UQ.csv",
+            [
+                "Model",
+                "XAI Method",
+                "UQ Method",
+                "Accuracy",
+                "F1-macro",
+                "ECE",
+                "NLL",
+                "Predictive Entropy",
+                "Probability Variance",
+                "XAI Time (ms)",
+                "Params (M)",
+            ],
+            model_xai_uq_table,
+        )
+    )
     return outputs
 
 
@@ -414,11 +479,34 @@ def _resolve_xai_models(value):
     return raw_models
 
 
+def _resolve_models(value, label):
+    raw_models = [
+        item.strip().lower()
+        for item in str(value or "").split(",")
+        if item.strip()
+    ]
+    if not raw_models or raw_models == ["all"]:
+        return SUPPORTED_MODELS
+
+    invalid = [model_name for model_name in raw_models if model_name not in SUPPORTED_MODELS]
+    if invalid:
+        raise ValueError(
+            f"Unknown {label} model(s): "
+            + ", ".join(invalid)
+            + ". Choose from "
+            + ", ".join(SUPPORTED_MODELS)
+            + ", or use all."
+        )
+    return raw_models
+
+
 def benchmark_plan(args):
     quick_overrides = []
     if args.epochs is not None:
         quick_overrides.append(f"training.epochs={args.epochs}")
+    if args.patience is not None:
         quick_overrides.append(f"training.patience={args.patience}")
+        quick_overrides.append(f"training.early_stopping.patience={args.patience}")
     if args.batch_size is not None:
         quick_overrides.append(f"data.batch_size={args.batch_size}")
     if args.num_workers is not None:
@@ -431,6 +519,8 @@ def benchmark_plan(args):
         quick_overrides.append(f"explainability.mc_samples={args.xai_mc_samples}")
     if args.ig_steps is not None:
         quick_overrides.append(f"explainability.steps={args.ig_steps}")
+    if args.xai_samples is not None:
+        quick_overrides.append(f"explainability.num_samples={args.xai_samples}")
 
     common = [
         f"experiment.device={args.device}",
@@ -466,62 +556,37 @@ def benchmark_plan(args):
                 ],
             })
 
-    if args.suite in {"full", "uq"}:
-        uq_runs = [
-            ("no_calibration", [
-                "uncertainty.method=none",
-                "calibration.temperature_scaling=false",
-                "training.label_smoothing=0.0",
-            ]),
-            ("label_smoothing", [
-                "uncertainty.method=none",
-                "calibration.temperature_scaling=false",
-                "training.label_smoothing=0.1",
-            ]),
-            ("temperature_scaling", [
-                "uncertainty.method=none",
-                "calibration.temperature_scaling=true",
-                "training.label_smoothing=0.0",
-            ]),
-            ("mc_dropout", [
-                "uncertainty.method=mc_dropout",
-                "calibration.temperature_scaling=false",
-                "training.label_smoothing=0.1",
-            ]),
-            ("mc_dropout_temperature_scaling", [
-                "uncertainty.method=mc_dropout",
-                "calibration.temperature_scaling=true",
-                "training.label_smoothing=0.1",
-            ]),
-        ]
-        for label, overrides in uq_runs:
-            plan.append({
-                "group": "uq",
-                "label": label,
-                "model": args.uq_model,
-                "overrides": common + [
-                    f"model.name={args.uq_model}",
-                    "explainability.generate=false",
-                    "explainability.method=gradcam",
-                    "explainability.variant=gradcam++",
-                ] + overrides,
-            })
+    if args.suite in {"full", "uq", "uq_xai"}:
+        for model_name in _resolve_models(args.uq_model, "UQ"):
+            for label, overrides in UQ_RUNS:
+                plan.append({
+                    "group": "uq",
+                    "label": label,
+                    "model": model_name,
+                    "overrides": common + [
+                        f"model.name={model_name}",
+                        "explainability.generate=false",
+                        "explainability.method=gradcam",
+                        "explainability.variant=gradcam++",
+                    ] + overrides,
+                })
 
-    if args.suite in {"full", "xai"}:
+    if args.suite in {"full", "xai", "uq_xai"}:
         for model_name in _resolve_xai_models(args.xai_model):
-            plan.append({
-                "group": "xai_train",
-                "label": "train_checkpoint",
-                "model": model_name,
-                "overrides": train_common + [
-                    f"model.name={model_name}",
-                    "uncertainty.method=mc_dropout",
-                    "calibration.temperature_scaling=true",
-                    "explainability.generate=false",
-                    "explainability.method=gradcam",
-                    "explainability.variant=gradcam++",
-                ],
-            })
+            if args.suite != "uq_xai":
+                plan.append({
+                    "group": "xai_train",
+                    "label": "train_checkpoint",
+                    "model": model_name,
+                    "overrides": train_common + [
+                        f"model.name={model_name}",
+                        "uncertainty.method=mc_dropout",
+                        "calibration.temperature_scaling=true",
+                        "explainability.generate=false",
+                        "explainability.method=gradcam",
+                        "explainability.variant=gradcam++",
+                    ],
+                })
             for label, overrides in XAI_RUNS:
                 plan.append({
                     "group": "xai",
@@ -547,12 +612,19 @@ def benchmark_plan(args):
             for item in plan
             if item["group"] == "xai" and item["label"] in wanted
         }
-        plan = [
-            item
-            for item in plan
-            if item["label"] in wanted
-            or (item["group"] == "xai_train" and item["model"] in selected_xai_models)
-        ]
+        filtered_plan = []
+        for item in plan:
+            if item["group"] == "xai":
+                if item["label"] in wanted:
+                    filtered_plan.append(item)
+            elif item["group"] == "xai_train":
+                if item["model"] in selected_xai_models:
+                    filtered_plan.append(item)
+            elif args.suite == "uq_xai":
+                filtered_plan.append(item)
+            elif item["label"] in wanted:
+                filtered_plan.append(item)
+        plan = filtered_plan
 
     return plan
 
@@ -561,6 +633,7 @@ def _format_run_budget(args):
     budget = []
     if args.epochs is not None:
         budget.append(f"epochs={args.epochs}")
+    if args.patience is not None:
         budget.append(f"patience={args.patience}")
     if args.batch_size is not None:
         budget.append(f"batch_size={args.batch_size}")
@@ -574,6 +647,8 @@ def _format_run_budget(args):
         budget.append(f"xai_mc_samples={args.xai_mc_samples}")
     if args.ig_steps is not None:
         budget.append(f"ig_steps={args.ig_steps}")
+    if args.xai_samples is not None:
+        budget.append(f"xai_samples={args.xai_samples}")
     if args.skip_xai_metrics:
         budget.append("xai_metrics=off")
     return ", ".join(budget) if budget else "config defaults"
@@ -585,17 +660,25 @@ def main():
     )
     parser.add_argument("--config", default="configs/config.yaml")
     parser.add_argument("--experiment-dir", default="EXPERIMENT")
-    parser.add_argument("--suite", choices=["full", "backbone", "uq", "xai"], default="full")
+    parser.add_argument("--suite", choices=["full", "backbone", "uq", "xai", "uq_xai"], default="full")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--epochs", type=int, default=None, help="Optional quick-run epoch override.")
-    parser.add_argument("--patience", type=int, default=3)
+    parser.add_argument("--patience", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=None)
     parser.add_argument("--prefetch-factor", type=int, default=None)
     parser.add_argument("--uncertainty-samples", type=int, default=None)
     parser.add_argument("--xai-mc-samples", type=int, default=None)
     parser.add_argument("--ig-steps", type=int, default=None)
-    parser.add_argument("--uq-model", default="efficientnet_b2")
+    parser.add_argument("--xai-samples", type=int, default=None)
+    parser.add_argument(
+        "--uq-model",
+        default="efficientnet_b2",
+        help=(
+            "Model(s) for UQ comparisons: all, one supported model, or a comma-separated "
+            "list. Default: efficientnet_b2."
+        ),
+    )
     parser.add_argument(
         "--xai-model",
         default="all",
@@ -668,7 +751,14 @@ def main():
             summary_csv,
             _benchmark_metadata(item, index, len(plan), run_dir)
         )
-        if item["group"] == "xai_train":
+        if (
+            item["group"] == "xai_train"
+            or (
+                args.suite == "uq_xai"
+                and item["group"] == "uq"
+                and item["label"] == "mc_dropout_temperature_scaling"
+            )
+        ):
             checkpoint_path = run_dir / "models" / "best_model.pth"
             if not checkpoint_path.exists():
                 raise RuntimeError(f"Expected trained checkpoint was not found: {checkpoint_path}")

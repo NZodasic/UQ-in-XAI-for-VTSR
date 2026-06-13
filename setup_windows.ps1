@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [string]$DatasetRoot = "",
-    [string]$PythonVersion = "3.11",
+    [string]$PythonVersion = "3.13",
     [string]$VenvDir = "venv",
     [ValidateSet("cu128", "cu126", "cu118", "cpu")]
     [string]$TorchIndex = "cu128",
@@ -43,6 +43,56 @@ function Invoke-External {
     if ($exitCode -ne 0) {
         throw "Command failed with exit code ${exitCode}: $FilePath $($ArgumentList -join ' ')"
     }
+}
+
+function Invoke-ProbeCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$ArgumentList = @()
+    )
+
+    try {
+        $previousErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $output = & $FilePath @ArgumentList 2>$null
+        $exitCode = $LASTEXITCODE
+        return [pscustomobject]@{
+            ExitCode = $exitCode
+            Output = $output
+        }
+    } catch {
+        return [pscustomobject]@{
+            ExitCode = 1
+            Output = @()
+        }
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+}
+
+function Normalize-PythonVersion {
+    param([string]$Version)
+
+    if ($Version -match "^(?<Major>\d+)\.(?<Minor>\d+)(?:\.\d+|\.x)?$") {
+        return "$($Matches.Major).$($Matches.Minor)"
+    }
+
+    throw "Use a Python minor version such as 3.13 or 3.14. Patch-style values like 3.13.x or 3.14.1 are also accepted."
+}
+
+function Test-PythonVersion {
+    param(
+        [string]$PythonExe,
+        [string]$Version
+    )
+
+    if (-not (Test-Path $PythonExe)) {
+        return $false
+    }
+
+    $code = "import sys; raise SystemExit(0 if sys.version_info[:2] == tuple(map(int, '$Version'.split('.'))) else 1)"
+    $result = Invoke-ProbeCommand -FilePath $PythonExe -ArgumentList @("-c", $code)
+    return ($result.ExitCode -eq 0)
 }
 
 function Get-Winget {
@@ -153,25 +203,19 @@ function Get-PythonExe {
 
     $launcher = Get-Command py.exe -ErrorAction SilentlyContinue
     if ($launcher) {
-        try {
-            $previousErrorActionPreference = $ErrorActionPreference
-            $ErrorActionPreference = "Continue"
-            $output = & $launcher.Source "-$Version" -c "import sys; print(sys.executable)" 2>$null
-            $exitCode = $LASTEXITCODE
-        } finally {
-            $ErrorActionPreference = $previousErrorActionPreference
-        }
+        $result = Invoke-ProbeCommand -FilePath $launcher.Source -ArgumentList @("-$Version", "-c", "import sys; print(sys.executable)")
 
-        if ($exitCode -eq 0 -and $output) {
-            return (($output | Select-Object -Last 1).ToString().Trim())
+        if ($result.ExitCode -eq 0 -and $result.Output) {
+            $candidate = (($result.Output | Select-Object -Last 1).ToString().Trim())
+            if (Test-PythonVersion -PythonExe $candidate -Version $Version) {
+                return $candidate
+            }
         }
     }
 
     $python = Get-Command python.exe -ErrorAction SilentlyContinue
     if ($python) {
-        $code = "import sys; raise SystemExit(0 if sys.version_info[:2] == tuple(map(int, '$Version'.split('.'))) else 1)"
-        & $python.Source -c $code 2>$null
-        if ($LASTEXITCODE -eq 0) {
+        if (Test-PythonVersion -PythonExe $python.Source -Version $Version) {
             return $python.Source
         }
     }
@@ -190,7 +234,7 @@ function Get-PythonExe {
     }
 
     foreach ($candidate in $candidates) {
-        if (Test-Path $candidate) {
+        if (Test-PythonVersion -PythonExe $candidate -Version $Version) {
             return $candidate
         }
     }
@@ -264,12 +308,22 @@ if dataset_root:
             print(f"  - {path}")
 '@
 
-    Invoke-External $PythonExe @("-c", $code, $Root, $SelectedTorchIndex)
+    $tempScript = Join-Path ([System.IO.Path]::GetTempPath()) ("uq_vtsr_config_{0}.py" -f [System.Guid]::NewGuid().ToString("N"))
+    try {
+        Set-Content -LiteralPath $tempScript -Value $code -Encoding UTF8
+        Invoke-External $PythonExe @($tempScript, $Root, $SelectedTorchIndex)
+    } finally {
+        if (Test-Path $tempScript) {
+            Remove-Item -LiteralPath $tempScript -Force
+        }
+    }
 }
 
 Write-Step "Checking Windows package manager"
 $wingetPath = Get-Winget
 Write-Host "winget: $wingetPath"
+
+$PythonVersion = Normalize-PythonVersion -Version $PythonVersion
 
 Write-Step "Installing system prerequisites"
 try {
@@ -289,7 +343,7 @@ if (-not $pythonExe) {
     $pythonExe = Get-PythonExe -Version $PythonVersion
 }
 if (-not $pythonExe) {
-    throw "Python $PythonVersion was installed but was not found in this terminal. Close CMD, open a new CMD, then run setup_windows.bat again."
+    throw "Python $PythonVersion was installed but was not found in this terminal. Close and reopen your terminal, then run setup_windows.bat again."
 }
 Write-Host "Python: $pythonExe"
 
@@ -346,18 +400,22 @@ if (-not (Test-Path $venvPython)) {
 }
 
 Write-Step "Upgrading pip tooling"
-Invoke-External $venvPython @("-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel")
+Invoke-External $venvPython @("-m", "pip", "install", "--upgrade", "pip", "setuptools<82", "wheel")
 
 if ($TorchIndex -ne "cpu" -and (Test-PythonCudaAvailable -PythonExe $venvPython)) {
     Write-Step "PyTorch CUDA already works; skipping PyTorch reinstall"
 } else {
     Write-Step "Installing PyTorch ($TorchIndex)"
-    Invoke-External $venvPython @(
-        "-m", "pip", "install",
+    $torchInstallArgs = @("-m", "pip", "install")
+    if ($TorchIndex -ne "cpu") {
+        $torchInstallArgs += "--force-reinstall"
+    }
+    $torchInstallArgs += @(
         "torch",
         "torchvision",
         "--index-url", "https://download.pytorch.org/whl/$TorchIndex"
     )
+    Invoke-External $venvPython $torchInstallArgs
 }
 
 Write-Step "Installing project requirements"
@@ -385,7 +443,16 @@ if torch.cuda.is_available():
     print(f"CUDA runtime: {torch.version.cuda}")
     print(f"GPU: {torch.cuda.get_device_name(0)}")
 '@
-Invoke-External $venvPython @("-c", $verifyCode)
+
+$verifyScript = Join-Path ([System.IO.Path]::GetTempPath()) ("uq_vtsr_verify_{0}.py" -f [System.Guid]::NewGuid().ToString("N"))
+try {
+    Set-Content -LiteralPath $verifyScript -Value $verifyCode -Encoding UTF8
+    Invoke-External $venvPython @($verifyScript)
+} finally {
+    if (Test-Path $verifyScript) {
+        Remove-Item -LiteralPath $verifyScript -Force
+    }
+}
 
 if ($TorchIndex -ne "cpu") {
     $cudaCheckCode = "import torch; raise SystemExit(0 if torch.cuda.is_available() else 1)"

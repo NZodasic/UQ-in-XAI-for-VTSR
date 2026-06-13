@@ -1,71 +1,74 @@
-# Configurations for TSR Experiment
 experiment:
   seed: 42
-  device: "cuda"
+  device: cuda
   deterministic: false
   cudnn_benchmark: true
-  save_config: false
-  save_summary: false
-
+  save_config: true
+  save_summary: true
 data:
-  train_images_dir: "Dataset/data2-augment/images/train"
-  train_labels_dir: "Dataset/data2-augment/labels/train"
-  val_images_dir: "Dataset/data2-augment/images/val"
-  val_labels_dir: "Dataset/data2-augment/labels/val"
-  test_images_dir: "Dataset/data2-augment/images/test"
-  test_labels_dir: "Dataset/data2-augment/labels/test"
-  classes_file: "Dataset/data2-augment/custom_data.yaml"
-  image_size: [224, 224]
-  num_classes: 29   # max_id + 1 = 28 + 1
+  train_images_dir: C:\Users\ezycloudx-admin\Desktop\UQ-in-XAI-for-VTSR\Dataset\data2-augment\images\train
+  train_labels_dir: C:\Users\ezycloudx-admin\Desktop\UQ-in-XAI-for-VTSR\Dataset\data2-augment\labels\train
+  val_images_dir: C:\Users\ezycloudx-admin\Desktop\UQ-in-XAI-for-VTSR\Dataset\data2-augment\images\val
+  val_labels_dir: C:\Users\ezycloudx-admin\Desktop\UQ-in-XAI-for-VTSR\Dataset\data2-augment\labels\val
+  test_images_dir: C:\Users\ezycloudx-admin\Desktop\UQ-in-XAI-for-VTSR\Dataset\data2-augment\images\test
+  test_labels_dir: C:\Users\ezycloudx-admin\Desktop\UQ-in-XAI-for-VTSR\Dataset\data2-augment\labels\test
+  classes_file: C:\Users\ezycloudx-admin\Desktop\UQ-in-XAI-for-VTSR\Dataset\data2-augment\custom_data.yaml
+  image_size:
+  - 224
+  - 224
+  num_classes: 29
   batch_size: 192
-  num_workers: 4
+  num_workers: 2
   pin_memory: true
   prefetch_factor: 2
   index_workers: 20
   cache_index: true
-
 model:
-  name: "efficientnet_b2"   # "resnet50" | "efficientnet_b2" | "mobilenet_v2" | "densenet121"
+  name: efficientnet_b2
   dropout_rate: 0.4
   pretrained: true
-
 training:
-  epochs: 12
+  epochs: 10
   learning_rate: 0.0004
-  optimizer: "adam"
+  optimizer: adam
   weight_decay: 0.0001
-  patience: 3
+  patience: 1
+  early_stopping:
+    enabled: true
+    monitor: val_accuracy
+    mode: max
+    patience: 1
+    min_delta: 0.001
+    restore_best_weights: true
   label_smoothing: 0.1
   grad_clip: 1.0
-  scheduler: "cosine"       # "cosine" | "none"
-  warmup_epochs: 1          # Linear warmup period
-  min_lr: 0.000001
-  mixed_precision: true     # Uses CUDA AMP when available
-  allow_tf32: true          # Faster matmul/convolution on NVIDIA Ampere+
+  scheduler: cosine
+  warmup_epochs: 1
+  min_lr: 1.0e-06
+  mixed_precision: true
+  allow_tf32: true
   use_class_weights: true
   log_every_batches: 100
-  log_epoch_metrics: false
+  log_epoch_metrics: true
   checkpoint:
-    save_every_epochs: 0        # 0 disables resumable checkpoints; use 1 to save every epoch
-    keep_last: 3                # Keep the latest N epoch checkpoints; 0 keeps all
-    resume_from: null           # Example: "EXPERIMENT/run_001/models/checkpoints/latest.pth"
+    save_every_epochs: 1
+    keep_last: 2
+    resume_from: null
   tensorboard:
     enabled: false
-    log_dir: "tensorboard"
-
+    log_dir: tensorboard
 uncertainty:
-  method: "mc_dropout"
-  num_samples: 10           # Lower values reduce MC-dropout evaluation latency
-
+  method: mc_dropout
+  num_samples: 10
 explainability:
   generate: true
-  method: "gradcam"         # "gradcam" | "saliency" | "integrated_gradients"
-  variant: "gradcam++"      # for method="gradcam": "gradcam" | "gradcam++" | "eigencam" | "hirescam"
-  mc_samples: 5             # Number of forward passes for explanation uncertainty
-  steps: 24                 # for method="integrated_gradients"
+  method: gradcam
+  variant: gradcam++
+  num_samples: 5
+  mc_samples: 5
+  steps: 24
   compute_metrics: false
   fidelity_mask_fraction: 0.2
   stability_noise_std: 0.02
-
 calibration:
-  temperature_scaling: true  # post-hoc calibration sau khi train
+  temperature_scaling: true

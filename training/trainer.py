@@ -108,7 +108,18 @@ class Trainer:
             self.scheduler = None
             
         self.grad_clip = self.config.get('grad_clip', 'none')
-        self.patience = self.config.get('patience', 12)
+        self.early_stopping_cfg = self.config.get('early_stopping', {})
+        self.early_stopping_enabled = bool(self.early_stopping_cfg.get('enabled', True))
+        self.early_stopping_monitor = self.early_stopping_cfg.get('monitor', 'val_accuracy')
+        self.early_stopping_mode = self.early_stopping_cfg.get('mode')
+        if self.early_stopping_mode is None:
+            self.early_stopping_mode = 'min' if self.early_stopping_monitor == 'val_loss' else 'max'
+        if self.early_stopping_mode not in {'min', 'max'}:
+            raise ValueError("training.early_stopping.mode must be 'min' or 'max'.")
+        self.patience = int(self.early_stopping_cfg.get('patience', self.config.get('patience', 12)))
+        self.min_delta = float(self.early_stopping_cfg.get('min_delta', 0.0))
+        self.restore_best_weights = bool(self.early_stopping_cfg.get('restore_best_weights', True))
+        self.best_monitor_value = None
         self.log_every_batches = int(self.config.get('log_every_batches', 50))
         self.checkpoint_cfg = self.config.get('checkpoint', {})
         self.checkpoint_every = max(0, int(self.checkpoint_cfg.get('save_every_epochs', 1)))
@@ -187,10 +198,18 @@ class Trainer:
                 self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
 
             self.best_val_acc = float(checkpoint.get('best_val_acc', 0.0))
+            self.best_monitor_value = checkpoint.get('best_monitor_value')
+            if self.best_monitor_value is not None:
+                self.best_monitor_value = float(self.best_monitor_value)
             self.epochs_no_improve = int(checkpoint.get('epochs_no_improve', 0))
             self.train_losses = list(checkpoint.get('train_losses', []))
             self.val_losses = list(checkpoint.get('val_losses', []))
             self.val_accuracies = list(checkpoint.get('val_accuracies', []))
+            if self.best_monitor_value is None:
+                if self.early_stopping_monitor in {'val_accuracy', 'val_acc', 'accuracy'} and self.val_accuracies:
+                    self.best_monitor_value = max(self.val_accuracies)
+                elif self.early_stopping_monitor == 'val_loss' and self.val_losses:
+                    self.best_monitor_value = min(self.val_losses)
             self.best_model_state_dict = checkpoint.get('best_model_state_dict')
 
             completed_epoch = int(checkpoint.get('epoch', 0))
@@ -233,6 +252,7 @@ class Trainer:
             'scaler_state_dict': self.scaler.state_dict() if self.use_amp else None,
             'best_model_state_dict': self.best_model_state_dict,
             'best_val_acc': float(best_val_acc),
+            'best_monitor_value': self.best_monitor_value,
             'epochs_no_improve': int(epochs_no_improve),
             'train_losses': list(train_losses),
             'val_losses': list(val_losses),
@@ -337,9 +357,26 @@ class Trainer:
         self.tb_writer.add_scalar('EarlyStopping/epochs_no_improve', metrics['epochs_no_improve'], epoch)
         self.tb_writer.add_scalar('Checkpoint/is_best', int(metrics['is_best']), epoch)
         self.tb_writer.flush()
+
+    def _get_monitor_value(self, val_loss, val_acc):
+        if self.early_stopping_monitor in {'val_accuracy', 'val_acc', 'accuracy'}:
+            return val_acc
+        if self.early_stopping_monitor == 'val_loss':
+            return val_loss
+        raise ValueError(
+            "training.early_stopping.monitor must be 'val_accuracy' or 'val_loss'."
+        )
+
+    def _is_improvement(self, current_value, best_value):
+        if best_value is None:
+            return True
+        if self.early_stopping_mode == 'min':
+            return current_value < best_value - self.min_delta
+        return current_value > best_value + self.min_delta
         
     def train(self, epochs):
         best_val_acc = self.best_val_acc
+        best_monitor_value = self.best_monitor_value
         epochs_no_improve = self.epochs_no_improve
         train_losses = list(self.train_losses)
         val_losses = list(self.val_losses)
@@ -420,19 +457,36 @@ class Trainer:
                     self.scheduler.step()
                 next_lr = self._current_lr()
 
-                is_best = val_acc > best_val_acc
-                if is_best:
+                monitor_value = self._get_monitor_value(val_loss, val_acc)
+                is_best_for_checkpoint = val_acc > best_val_acc
+                is_improvement = self._is_improvement(monitor_value, best_monitor_value)
+                if is_best_for_checkpoint:
                     best_val_acc = val_acc
-                    epochs_no_improve = 0
                     self.best_model_state_dict = self._cpu_state_dict()
                     torch.save(self.best_model_state_dict, os.path.join(self.models_dir, 'best_model.pth'))
                     self.logger.info(f"--> Saved new best model (Acc: {best_val_acc:.4f})")
+
+                if is_improvement:
+                    best_monitor_value = monitor_value
+                    epochs_no_improve = 0
+                    self.best_model_state_dict = self._cpu_state_dict()
+                    torch.save(self.best_model_state_dict, os.path.join(self.models_dir, 'best_model.pth'))
+                    if not is_best_for_checkpoint:
+                        self.logger.info(
+                            f"--> Early-stopping monitor improved "
+                            f"({self.early_stopping_monitor}: {monitor_value:.4f})"
+                        )
                 else:
                     epochs_no_improve += 1
 
-                should_stop = epochs_no_improve >= self.patience
+                self.best_monitor_value = best_monitor_value
+                should_stop = (
+                    self.early_stopping_enabled
+                    and self.patience > 0
+                    and epochs_no_improve >= self.patience
+                )
                 checkpoint_path = None
-                if self._should_save_checkpoint(epoch, is_best, should_stop):
+                if self._should_save_checkpoint(epoch, is_best_for_checkpoint, should_stop):
                     checkpoint_path = self._save_checkpoint(
                         epoch=epoch,
                         best_val_acc=best_val_acc,
@@ -440,7 +494,7 @@ class Trainer:
                         train_losses=train_losses,
                         val_losses=val_losses,
                         val_accuracies=val_accuracies,
-                        is_best=is_best
+                        is_best=is_best_for_checkpoint
                     )
                     self.logger.info(f"Saved checkpoint: {checkpoint_path}")
 
@@ -453,7 +507,7 @@ class Trainer:
                     'lr': lr,
                     'next_lr': next_lr,
                     'epochs_no_improve': epochs_no_improve,
-                    'is_best': is_best,
+                    'is_best': is_best_for_checkpoint,
                     'checkpoint_path': checkpoint_path,
                     'epoch_seconds': time.time() - epoch_start_time
                 })
@@ -466,7 +520,15 @@ class Trainer:
                 self.val_accuracies = val_accuracies
 
                 if should_stop:
-                    self.logger.info(f"Early stopping triggered after {epoch} epochs.")
+                    self.logger.info(
+                        f"Early stopping triggered after {epoch} epochs. "
+                        f"Best {self.early_stopping_monitor}: {best_monitor_value:.4f}; "
+                        f"best validation accuracy: {best_val_acc:.4f}."
+                    )
+                    if self.restore_best_weights and self.best_model_state_dict is not None:
+                        self.model.load_state_dict(self.best_model_state_dict)
+                        torch.save(self.best_model_state_dict, os.path.join(self.models_dir, 'best_model.pth'))
+                        self.logger.info("Restored best model weights after early stopping.")
                     break
         except KeyboardInterrupt:
             completed_epoch = len(val_accuracies)

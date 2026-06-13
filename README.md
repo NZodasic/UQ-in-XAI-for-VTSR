@@ -163,20 +163,26 @@ Recommended thesis comparison runs:
 
 ---
 ##Note on GPU machine:
-Run this from the project root on the new computer:
+For the practical all-model UQ + XAI thesis run, train each backbone once with MC Dropout + Temperature Scaling, then generate the selected XAI methods from each checkpoint:
 
 ```bat
-benchmark.bat --suite xai --epochs 10 --patience 3 --only-labels gradcam++,eigencam,hirescam
+benchmark.bat --suite xai --xai-model all --only-labels gradcam++,eigencam,hirescam
+```
+
+If you need the full UQ ablation on every backbone before XAI, run this heavier version:
+
+```bat
+benchmark.bat --suite uq_xai --uq-model all --xai-model all --only-labels gradcam++,eigencam,hirescam
 ```
 
 If you want only one backbone/model, add this, for example:
 
 ```bat
-benchmark.bat --suite xai --epochs 10 --patience 3 --xai-model efficientnet_b2 --only-labels gradcam++,eigencam,hirescam
+benchmark.bat --suite xai --xai-model efficientnet_b2 --only-labels gradcam++,eigencam,hirescam
 ```
 
 Direct Python version:
 
 ```bash
-python experiment_tools/run_full_benchmark.py --config configs/config.yaml --suite xai --epochs 10 --patience 3 --only-labels gradcam++,eigencam,hirescam
+python experiment_tools/run_full_benchmark.py --config configs/config.yaml --suite xai --xai-model all --only-labels gradcam++,eigencam,hirescam
 ```

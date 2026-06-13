@@ -233,6 +233,10 @@ def save_run_summary(
         'nll': calibration.get('nll'),
         'brier': calibration.get('brier'),
         'latency_ms': results.get('latency_ms', 0.0),
+        'predictive_entropy_mean': uncertainty.get('predictive_entropy_mean'),
+        'predictive_entropy_std': uncertainty.get('predictive_entropy_std'),
+        'probability_variance_mean': uncertainty.get('probability_variance_mean'),
+        'probability_variance_std': uncertainty.get('probability_variance_std'),
         'xai_time_ms': xai.get('avg_time_ms'),
         'xai_fidelity': xai.get('fidelity'),
         'xai_stability': xai.get('stability')
@@ -403,6 +407,14 @@ def main():
     logger.info(f"Label smoothing: {config['training'].get('label_smoothing', 0.0)}")
     logger.info(f"Class weights: {config['training'].get('use_class_weights', False)}")
     logger.info(f"Grad clip : {config['training'].get('grad_clip', 'none')}")
+    early_stopping_cfg = config['training'].get('early_stopping', {})
+    logger.info(
+        "Early stopping: "
+        f"enabled={early_stopping_cfg.get('enabled', True)}, "
+        f"monitor={early_stopping_cfg.get('monitor', 'val_accuracy')}, "
+        f"patience={early_stopping_cfg.get('patience', config['training'].get('patience', 12))}, "
+        f"min_delta={early_stopping_cfg.get('min_delta', 0.0)}"
+    )
     logger.info(f"Uncertainty method: {config['uncertainty']['method']}")
     logger.info(f"Explanation method: {config['explainability']['method']}\n")
 
@@ -540,7 +552,8 @@ def main():
             # XAI — use base model (not calibration wrapper) for Grad-CAM
             model.eval()
             evaluator.model = model
-            xai_results = evaluator.generate_explanations(num_samples=5)
+            xai_samples = int(config.get('explainability', {}).get('num_samples', 5))
+            xai_results = evaluator.generate_explanations(num_samples=xai_samples)
             if xai_results:
                 results['xai'] = xai_results
         else:

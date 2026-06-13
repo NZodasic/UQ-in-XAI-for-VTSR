@@ -22,7 +22,7 @@ custom_data.yaml
 
 The script installs/checks:
 
-- Python 3.11
+- Python 3.13 by default; pass `-PythonVersion 3.14` to use Python 3.14
 - Microsoft Visual C++ runtime
 - Git, if missing
 - NVIDIA GPU/driver availability
@@ -95,6 +95,7 @@ benchmark.bat --suite xai --xai-model efficientnet_b2
 
 ```bat
 setup_windows.bat -DatasetRoot "D:\path\to\data2-augment" -RunSmokeTest
+setup_windows.bat -DatasetRoot "D:\path\to\data2-augment" -PythonVersion 3.14
 setup_windows.bat -DatasetRoot "D:\path\to\data2-augment" -InstallCudaToolkit
 setup_windows.bat -TorchIndex cpu
 setup_windows.bat -ForceRecreateVenv
